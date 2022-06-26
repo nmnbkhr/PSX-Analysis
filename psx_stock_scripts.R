@@ -1,35 +1,36 @@
-# 
-# 
-# time_unit <- "month"
-# 
-# data <- get_stock_data("HBL")
-# 
-# data
-# 
-# ?pivot_wider
-# 
+# # 
+# # 
+# time_unit <- "day"
+# # 
+# # data <- get_stock_data("HBL")
+# # 
+# # data
+# # 
+# # ?pivot_wider
+# # 
 # datadf <- aggregate_time_series(data,time_unit = "day")
-# 
-#    datadf1 <- datadf %>% generate_forecast()%>%
-#        pivot_wider(id_cols =  date, names_from = key,values_from = total_adjusted)%>%
-#        mutate(symbol="HBL",adjusted = NA, mavg_short=NA,mavg_long=NA, Prediction, date = as.character(date))%>%
-#        select(symbol,date,adjusted,mavg_short,mavg_long,Prediction)
-#    
-# 
-# data1 <-  
-# add_row(datadf1)
-# data%>%mutate(Prediction=as.numeric(NA))%>%add_row(as.data.frame(datadf1)%>%filter(is.na(Prediction)==FALSE))%>%plot_stock_data()
-# 
-# plot_stock_data()
-# 
-# plot_time_series(datadf)
-# 
-#   generate_forecast(datadf)%>%
-# 
-# 
-# 
-# 
-# 
+# plot_time_series()
+# # 
+# #    datadf1 <- datadf %>% generate_forecast()%>%
+# #        pivot_wider(id_cols =  date, names_from = key,values_from = total_adjusted)%>%
+# #        mutate(symbol="HBL",adjusted = NA, mavg_short=NA,mavg_long=NA, Prediction, date = as.character(date))%>%
+# #        select(symbol,date,adjusted,mavg_short,mavg_long,Prediction)
+# #    
+# # 
+# # data1 <-  
+# # add_row(datadf1)
+# # data%>%mutate(Prediction=as.numeric(NA))%>%add_row(as.data.frame(datadf1)%>%filter(is.na(Prediction)==FALSE))%>%plot_stock_data()
+# # 
+# # plot_stock_data()
+# # 
+# # plot_time_series(datadf)
+# # 
+# datapred <- generate_forecast(datadf)
+# # 
+# # 
+# # 
+# # 
+# # 
 
 
 get_stock_list <-
@@ -80,8 +81,7 @@ get_stock_data <-
         # Connection to MYSQL ----
         ## MYSQL Connection ----
         
-        from = today() - days(180) 
-        to   = today()
+     
         # mavg_short = 5
         # mavg_long = 8
         
@@ -172,7 +172,7 @@ plot_stock_data <-
             theme_tq() +
             scale_y_continuous(labels = scales::dollar_format(largest_with_cents = 10)) +
             scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
-                         date_labels = "%B")+
+                         date_labels = "%b\n%Y")+
             scale_color_tq() +
             labs(y = "Adjusted Share Price", x = "")
         
@@ -264,6 +264,7 @@ sqlQuery <- function (query) {
 }
 
 
+
 populate_new_data <- function(){
     # Connection to MYSQL ----
     ## MYSQL Connection ----
@@ -325,7 +326,8 @@ populate_new_data <- function(){
     }
     
     
-    )
+    ) 
+    dbDisconnect(mydb)
 }
 
 
@@ -341,7 +343,7 @@ aggregate_time_series <-
             ungroup() %>%
             
             mutate(label_text = str_glue("Date: {date}
-                                 Revenue: {scales::dollar(total_adjusted)}"))
+                                 Price: {scales::dollar(total_adjusted)}"))
         
         return(output_tbl)
         
@@ -411,7 +413,7 @@ generate_forecast <-
             rename(total_adjusted = .pred, 
                    date        = index) %>%
             mutate(label_text = str_glue("Date: {date}
-                                 Revenue: {scales::dollar(total_adjusted)}")) %>%
+                                 Price: {scales::dollar(total_adjusted)}")) %>%
             add_column(key = "Prediction")
         
         output_tbl <- data %>%
@@ -446,6 +448,8 @@ plot_forecast <-
             theme_tq() +
             scale_color_tq() +
             scale_y_continuous(labels = scales::dollar_format(largest_with_cents = 10))+
+            scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
+                         date_labels = "%b\n%Y") +
             # scale_y_continuous(labels = scales::dollar_format()) +
            # expand_limits(y = 0) +
             labs(x = "", y = "")
@@ -468,5 +472,72 @@ plot_forecast <-
         ggplotly(g, tooltip = "text")
     }
 
+
+
+reload_history <- function(){
+    
+   
+        # Connection to MYSQL ----
+        ## MYSQL Connection ----
+        mydb = dbConnect(MySQL(), user='ruser',password='user123!' ,dbname='rschema', host='127.0.0.1')
+        
+        ## Set to enable ----
+        dbSendQuery(mydb, "SET GLOBAL local_infile = true;") 
+        
+        
+        query<- "select min(stockdate) from psx_stocksinfo_table"
+        
+        # close db connection after function call exits
+        on.exit(dbDisconnect(mydb))
+        
+        
+        # send Query to btain result set
+        rs <- dbSendQuery(mydb, query)
+        
+        # get elements from result sets and convert to dataframe
+        result <- fetch(rs, -1)
+        
+        
+        
+         if(is.na(result$`min(stockdate)`)==TRUE){
+             dfd<- tibble(dates=seq(today()-360, today()-1, by="days"))
+         }else{
+            dfd<- tibble(dates=seq(as.Date(result$`min(stockdate)`)-180, as.Date(result$`min(stockdate)`)-1, by="days"))
+         }
+        
+        dfd
+        
+        # Scrape data from PSX Site ----
+        url <-     map(dfd$dates,.f=function(.x){
+            ddate <- .x
+          
+            url1 <- paste("https://dps.psx.com.pk/download/indhist/",ddate,".xls",sep = "")
+            url1
+            zz <-  GET(url1, write_disk(path = paste("Z-PSX",ddate,".xls")))
+            
+            if(zz$status_code!=404){
+                kse_all_shares_df <- read_excel(paste("Z-PSX",ddate,".xls"),sheet = "KSE-ALL-Shares")
+                
+                if(!is_empty(kse_all_shares_df) ) {   
+                    kse_all_shares_df <- kse_all_shares_df %>%
+                        add_column(stockdate = ymd(ddate))%>%
+                        rename(id_wt_perc=`IDX WT %`,
+                               FF_BASED_MCAP= `FF BASED MCAP`,
+                               FF_BASED_SHARES=`FF BASED SHARES`,
+                               ORD_SHARES=`ORD SHARES`,
+                               ORD_SHARES_MCAP=`ORD SHARES MCAP`
+                        )
+                    
+                    dbWriteTable(mydb, name='psx_stocksinfo_table', value=kse_all_shares_df,append= TRUE, temporary= FALSE)
+                }  
+            }
+            file.remove(paste("Z-PSX",ddate,".xls"))
+        }
+        
+        
+        ) 
+       
+    }
+    
 
 

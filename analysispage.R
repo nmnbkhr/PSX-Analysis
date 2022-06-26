@@ -130,9 +130,29 @@ ui <- navbarPage(
                         hr(),
                         sliderInput(inputId = "mavg_short", label = "Short Moving Average", value = 20, min = 5, max = 40),
                         sliderInput(inputId = "mavg_long", label = "Long Moving Average", value = 50, min = 50, max = 120),
+                        sliderInput(inputId = "n_days", label = "n-Days", value = 180, min = 90, max = 360),
                         actionButton(inputId = "apply_and_save", label = "Apply & Save", icon = icon("save"))
                     ) %>% hidden()
+                ),
+                wellPanel(
+                    ui <- fluidPage(
+                        radioButtons(inputId = "dist", "Time Unit:",
+                                     c("Daily" = "day",
+                                       "Weekly" = "week",
+                                       "Monthly" = "month",
+                                       "Quarterly" = "quarter",
+                                       "Yearly" = "year"),selected = "day")
+                      
+                    ),
+                    div(
+                        id = "n_periods",
+                        hr(),
+                        sliderInput(inputId = "n_future", label = "Forecast Horizon", value = 10, min = 5, max = 40),
+                        actionButton(inputId = "apply_and_save1", label = "Apply & Save", icon = icon("save"))
+                    ) 
+                    #%>% hidden()
                 )
+                
             ),
             
             # 3.2 PLOT PANEL ----
@@ -191,6 +211,10 @@ server <- function(input, output, session) {
         populate_new_data()
     }, ignoreNULL = FALSE)
     
+    # 1.x Time unit input ----
+    time_unit <- eventReactive(input$dist, {
+        input$dist
+    }, ignoreNULL = FALSE)
     
 
     # 1.4 Apply & Save Settings ----
@@ -200,6 +224,14 @@ server <- function(input, output, session) {
 
     mavg_long <- eventReactive(input$apply_and_save, {
         input$mavg_long
+    }, ignoreNULL = FALSE)
+    
+    n_future <- eventReactive(input$apply_and_save1, {
+        input$n_future
+    }, ignoreNULL = FALSE)
+    
+    n_days <- eventReactive(input$apply_and_save,{
+        input$n_days
     }, ignoreNULL = FALSE)
 
     selected_tab <- eventReactive(input$apply_and_save, {
@@ -219,7 +251,7 @@ server <- function(input, output, session) {
     stock_data_tbl <- reactive({
         stock_symbol() %>%
             get_stock_data(
-                from = today()-days(180),
+                from = today()-days(n_days()),
                 to   = today(),
                 mavg_short = mavg_short(),
                 mavg_long  = mavg_long())
@@ -227,8 +259,8 @@ server <- function(input, output, session) {
 
     stock_data_tbl1 <- reactive({
         stock_data_tbl()%>%
-            aggregate_time_series(time_unit = "day")%>%
-            generate_forecast()
+            aggregate_time_series(time_unit = time_unit())%>%
+            generate_forecast(n_future = n_future())
     })
     
 
@@ -258,7 +290,7 @@ server <- function(input, output, session) {
         if (length(reactive_values$favorites_list) > 0) {
             generate_favorite_cards(
                 favorites  = reactive_values$favorites_list,
-                from       = today() - days(180),
+                from       = today() - days(n_days()),
                 to         = today(),
                 mavg_short = mavg_short(),
                 mavg_long  = mavg_long()
@@ -381,7 +413,7 @@ server <- function(input, output, session) {
 
                                 x %>%
                                     get_stock_data(
-                                        from = today() - days(180),
+                                        from = today() - days(n_days()),
                                         to   = today(),
                                         mavg_short = mavg_short(),
                                         mavg_long  = mavg_long()
@@ -445,7 +477,7 @@ server <- function(input, output, session) {
                                 
                                 x %>%
                                     get_stock_data(
-                                        from = today() - days(180),
+                                        from = today() - days(n_days()),
                                         to   = today(),
                                         mavg_short = mavg_short(),
                                         mavg_long  = mavg_long()
