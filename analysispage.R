@@ -27,10 +27,12 @@ library(plotly)
 library(tidyquant)
 library(tidyverse)
 
+library(parsnip)
+library(xgboost)
 # source(file = "00_scripts/stock_analysis_functions.R")
 # source(file = "00_scripts/info_card.R")
 # source(file = "00_scripts/generate_favorite_cards.R")
-
+source(file = "psx_stock_scripts.R")
 stock_list_tbl <- get_stock_list("PSX")
 
 current_user_favorites <- c("COLG", "FATIMA", "GLAXO")
@@ -137,9 +139,14 @@ ui <- navbarPage(
             column(
                 width = 8, 
                 uiOutput(outputId = "stock_charts")
+            ),
+            column(
+                width = 8, 
+                uiOutput(outputId = "forecast_charts")
             )
         ),
         
+     
         # 4.0 ANALYST COMMENTARY ----
         div(
             class = "container",
@@ -218,7 +225,12 @@ server <- function(input, output, session) {
                 mavg_long  = mavg_long())
     })
 
-
+    stock_data_tbl1 <- reactive({
+        stock_data_tbl()%>%
+            aggregate_time_series(time_unit = "day")%>%
+            generate_forecast()
+    })
+    
 
     # 2.0 FAVORITE CARDS ----
 
@@ -315,7 +327,19 @@ server <- function(input, output, session) {
 
     # 3.2 Plotly Plot ----
     output$plotly_plot <- renderPlotly({
-        stock_data_tbl() %>% plot_stock_data()
+        stock_data_tbl()%>%
+            # mutate(Prediction=NA)%>%
+            # add_row(as.data.frame(
+            #     stock_data_tbl1()%>%
+            #         pivot_wider(id_cols =  date, names_from = key,values_from = total_adjusted)%>%
+            #         mutate(symbol=stock_symbol(),adjusted = NA, mavg_short=NA,mavg_long=NA, Prediction, date = as.character(date))%>%
+            #         select(symbol,date,adjusted,mavg_short,mavg_long,Prediction)%>%
+            #         filter(is.na(Prediction==FALSE))))%>%
+            plot_stock_data()
+    })
+    
+    output$plotly_plot1 <- renderPlotly({
+        stock_data_tbl1() %>% plot_forecast()
     })
 
     # 3.3 Favorite Plots ----
@@ -382,6 +406,70 @@ server <- function(input, output, session) {
 
 })
 
+
+    
+    output$forecast_charts <- renderUI({
+        
+        # First Tab Panel
+        tab_panel_2 <- tabPanel(
+            title = "Last Analysis",
+            div(
+                class = "panel",
+                div(
+                    class = "panel-header",
+                    h4(stock_symbol())
+                ),
+                div(
+                    class = "panel-body",
+                    plotlyOutput(outputId = "plotly_plot1")
+                )
+            )
+        )
+
+        # Favorite Panels
+        favorite_tab_panels1 <- NULL
+        if (length(reactive_values$favorites_list) > 0) {
+            
+            favorite_tab_panels1 <- reactive_values$favorites_list %>%
+                map(.f = function(x) {
+                    tabPanel(
+                        title = x,
+                        div(
+                            class = "panel",
+                            div(
+                                class = "panel-header",
+                                h4(x)
+                            ),
+                            div(
+                                class = "panel-body",
+                                
+                                x %>%
+                                    get_stock_data(
+                                        from = today() - days(180),
+                                        to   = today(),
+                                        mavg_short = mavg_short(),
+                                        mavg_long  = mavg_long()
+                                    ) %>%
+                                    aggregate_time_series(time_unit = "day")%>%
+                                    generate_forecast()%>%
+                                    plot_forecast()
+                            )
+                        )
+                    )
+                })
+            
+        }
+        
+        
+        # Building the Tabset Panel
+        do.call(
+            what = tabsetPanel,
+            args = list(tab_panel_2) %>%
+                append(favorite_tab_panels1) %>%
+                append(list(id = "tab_panel_stock_chart", type = "pills", selected = selected_tab() ))
+        )
+        
+    })
 # 4.0 COMMENTARY ----
 
 # 4.1 Generate Commentary ----

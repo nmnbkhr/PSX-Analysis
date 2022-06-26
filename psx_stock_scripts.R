@@ -1,3 +1,37 @@
+# 
+# 
+# time_unit <- "month"
+# 
+# data <- get_stock_data("HBL")
+# 
+# data
+# 
+# ?pivot_wider
+# 
+# datadf <- aggregate_time_series(data,time_unit = "day")
+# 
+#    datadf1 <- datadf %>% generate_forecast()%>%
+#        pivot_wider(id_cols =  date, names_from = key,values_from = total_adjusted)%>%
+#        mutate(symbol="HBL",adjusted = NA, mavg_short=NA,mavg_long=NA, Prediction, date = as.character(date))%>%
+#        select(symbol,date,adjusted,mavg_short,mavg_long,Prediction)
+#    
+# 
+# data1 <-  
+# add_row(datadf1)
+# data%>%mutate(Prediction=as.numeric(NA))%>%add_row(as.data.frame(datadf1)%>%filter(is.na(Prediction)==FALSE))%>%plot_stock_data()
+# 
+# plot_stock_data()
+# 
+# plot_time_series(datadf)
+# 
+#   generate_forecast(datadf)%>%
+# 
+# 
+# 
+# 
+# 
+
+
 get_stock_list <-
     function(stock_index = "PSX") {
          
@@ -27,17 +61,16 @@ get_stock_list <-
         
 }
 
-df <- get_stock_list("PSX")
-df
 
-dd <- get_symbol_from_user_input("UBLPETF, UBLPakistan Enterprise ETF")
+
+
 
 get_symbol_from_user_input <-
     function(user_input) {
         user_input %>% str_split(pattern = ", ") %>% pluck(1, 1)
     }
 
-get_stock_data("COLG")
+
 get_stock_data <-
     function(stock_symbol, 
              from = today() - days(180), 
@@ -67,6 +100,7 @@ get_stock_data <-
             mutate(mavg_short = rollmean(adjusted, k = mavg_short, na.pad = TRUE, align = "right")) %>%
             mutate(mavg_long  = rollmean(adjusted, k = mavg_long, na.pad = TRUE, align = "right"))%>%
             select(symbol,date,adjusted:mavg_long)
+            
         
        
         
@@ -127,7 +161,7 @@ generate_favorite_card <-
         )
     }
 
-stock_symbol
+
 plot_stock_data <-
     function(data) {
         g <- data %>%
@@ -295,29 +329,144 @@ populate_new_data <- function(){
 }
 
 
-url <-     map(dfd$dates,.f=function(.x){
-    ddate <- .x
-    #ddate <- "2021-12-18"
-    url1 <- paste("https://dps.psx.com.pk/download/indhist/",ddate,".xls",sep = "")
-    url1
-    zz <-  GET(url1, write_disk(path = paste("Z-PSX",ddate,".xls")))
-    
-    if(zz$status_code!=404){
-        kse_all_shares_df <- read_excel(paste("Z-PSX",ddate,".xls"),sheet = "KSE-ALL-Shares")
+aggregate_time_series <-
+    function(data, time_unit = "month") {
         
-        if(!is_empty(kse_all_shares_df) ) {   
-            kse_all_shares_df <- kse_all_shares_df %>%
-                add_column(stockdate = ymd(ddate))%>%
-                rename(id_wt_perc=`IDX WT %`,
-                       FF_BASED_MCAP= `FF BASED MCAP`,
-                       FF_BASED_SHARES=`FF BASED SHARES`,
-                       ORD_SHARES=`ORD SHARES`,
-                       ORD_SHARES_MCAP=`ORD SHARES MCAP`
-                )
+        output_tbl <- data %>%
             
-            dbWriteTable(mydb, name='psx_stocksinfo_table', value=kse_all_shares_df,append= TRUE, temporary= FALSE)
-        }  
+            mutate(date = floor_date(as_date(date), unit = time_unit)) %>%
+            
+            group_by(date) %>%
+            summarize(total_adjusted = sum(adjusted)) %>%
+            ungroup() %>%
+            
+            mutate(label_text = str_glue("Date: {date}
+                                 Revenue: {scales::dollar(total_adjusted)}"))
+        
+        return(output_tbl)
+        
     }
-    file.remove(paste("Z-PSX",ddate,".xls"))
-}
-)
+
+plot_time_series <-
+    function(data) {
+        
+        g <- data %>%
+            
+            ggplot(aes(date, total_adjusted)) +
+            
+            geom_line(color = "#2c3e50") +
+            geom_point(aes(text = label_text), color = "#2c3e50", size = 0.1) +
+            geom_smooth(method = "loess", span = 0.2) +
+            
+            theme_tq() +
+            expand_limits(y = 0) +
+            scale_y_continuous(labels = scales::dollar_format()) +
+            labs(x = "", y = "")
+        
+        
+        ggplotly(g, tooltip = "text")
+        
+    }
+generate_forecast <-
+    function(data, n_future = 12, seed = NULL) {
+        
+        train_tbl <- data %>% 
+            tk_augment_timeseries_signature()
+        
+        future_data_tbl <- data %>%
+            tk_index() %>%
+            tk_make_future_timeseries(n_future = n_future, inspect_weekdays = TRUE, inspect_months = TRUE) %>%
+            tk_get_timeseries_signature() 
+        
+        time_scale <- data %>%
+            tk_index() %>%
+            tk_get_timeseries_summary() %>%
+            pull(scale)
+        
+        if (time_scale == "year") {
+            
+            model <- linear_reg(mode = "regression") %>%
+                set_engine(engine = "lm") %>%
+                fit.model_spec(total_adjusted ~ ., data = train_tbl %>% select(total_adjusted, index.num))
+            
+        } else {
+            seed <- seed
+            set.seed(seed)
+            model <- boost_tree(
+                mode = "regression",
+                mtry = 20,
+                trees = 500,
+                min_n = 3,
+                tree_depth = 8,
+                learn_rate = 0.01,
+                loss_reduction = 0.01) %>%
+                set_engine(engine = "xgboost") %>%
+                fit.model_spec(total_adjusted ~ ., data = train_tbl %>% select(-date, -label_text, -diff))
+        }
+        
+        
+        prediction_tbl <- predict(model, new_data = future_data_tbl) %>%
+            bind_cols(future_data_tbl) %>%
+            select(.pred, index) %>%
+            rename(total_adjusted = .pred, 
+                   date        = index) %>%
+            mutate(label_text = str_glue("Date: {date}
+                                 Revenue: {scales::dollar(total_adjusted)}")) %>%
+            add_column(key = "Prediction")
+        
+        output_tbl <- data %>%
+            add_column(key = "Actual") %>%
+            bind_rows(prediction_tbl) 
+        
+        return(output_tbl)
+    }
+
+plot_forecast <-
+    function(data) {
+        
+        # Yearly - LM Smoother
+        time_scale <- data %>%
+            tk_index() %>%
+            tk_get_timeseries_summary() %>%
+            pull(scale)
+        
+        # Only 1 Prediction - points
+        n_predictions <- data %>%
+            filter(key == "Prediction") %>%
+            nrow()
+        
+        
+        g <- data %>%
+            ggplot(aes(date, total_adjusted, color = key)) +
+            
+            geom_line() +
+            # geom_point(aes(text = label_text), size = 0.01) +
+            # geom_smooth(method = "loess", span = 0.2) +
+            
+            theme_tq() +
+            scale_color_tq() +
+            scale_y_continuous(labels = scales::dollar_format(largest_with_cents = 10))+
+            # scale_y_continuous(labels = scales::dollar_format()) +
+           # expand_limits(y = 0) +
+            labs(x = "", y = "")
+        
+        # Yearly - LM Smoother
+        if (time_scale == "year") {
+            g <- g +
+                geom_smooth(method = "lm")
+        } else {
+            g <- g + geom_smooth(method = "loess", span = 0.2)
+        }
+        
+        # Only 1 Prediction
+        if (n_predictions == 1) {
+            g <- g + geom_point(aes(text = label_text), size = 1)
+        } else {
+            g <- g + geom_point(aes(text = label_text), size = 0.01)
+        }
+        
+        ggplotly(g, tooltip = "text")
+    }
+
+
+
